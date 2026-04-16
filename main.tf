@@ -1,4 +1,4 @@
-# 1. Provider & VPC Setup
+# 1. Provider & VPC
 provider "aws" {
   region = "us-east-1"
 }
@@ -10,21 +10,19 @@ resource "aws_vpc" "test_vpc" {
   tags                 = { Name = "test_vpc" }
 }
 
-# 2. Subnets (Public & Private)
+# 2. Subnets
 resource "aws_subnet" "test_public_subnet" {
-  vpc_id                  = aws_vpc.test_vpc.id
-  cidr_block              = "172.16.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "us-east-1a"
-  tags                    = { Name = "test_public_subnet" }
+  vpc_id            = aws_vpc.test_vpc.id
+  cidr_block        = "172.16.1.0/24"
+  availability_zone = "us-east-1a"
+  tags              = { Name = "test_public_subnet" }
 }
 
 resource "aws_subnet" "test_public_subnet_b" {
-  vpc_id                  = aws_vpc.test_vpc.id
-  cidr_block              = "172.16.3.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "us-east-1b"
-  tags                    = { Name = "test_public_subnet_b" }
+  vpc_id            = aws_vpc.test_vpc.id
+  cidr_block        = "172.16.3.0/24"
+  availability_zone = "us-east-1b"
+  tags              = { Name = "test_public_subnet_b" }
 }
 
 resource "aws_subnet" "test_private_subnet" {
@@ -34,19 +32,20 @@ resource "aws_subnet" "test_private_subnet" {
   tags              = { Name = "test_private_subnet" }
 }
 
-# 3. Internet Gateway & NAT Gateway
+# 3. Gateways
 resource "aws_internet_gateway" "test_igw" {
   vpc_id = aws_vpc.test_vpc.id
 }
 
-resource "aws_eip" "nat_eip" {
-  domain = "vpc"
-}
+# THE NEW REGIONAL NAT (No EIP or Subnet required)
+resource "aws_nat_gateway" "regional_nat" {
+  connectivity_type = "public"
+  availability_mode = "regional"
+  vpc_id           = aws_vpc.test_vpc.id
 
-resource "aws_nat_gateway" "test_nat_gw" {
-  allocation_id = aws_eip.nat_eip.id
-  subnet_id     = aws_subnet.test_public_subnet.id
-  depends_on    = [aws_internet_gateway.test_igw]
+  tags = { Name = "regional-nat-gw" }
+
+  depends_on = [aws_internet_gateway.test_igw]
 }
 
 # 4. Route Tables
@@ -63,16 +62,11 @@ resource "aws_route_table_association" "pub_a" {
   route_table_id = aws_route_table.test_public_rt.id
 }
 
-resource "aws_route_table_association" "pub_b" {
-  subnet_id      = aws_subnet.test_public_subnet_b.id
-  route_table_id = aws_route_table.test_public_rt.id
-}
-
 resource "aws_route_table" "test_private_rt" {
   vpc_id = aws_vpc.test_vpc.id
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.test_nat_gw.id
+    nat_gateway_id = aws_nat_gateway.regional_nat.id
   }
 }
 
@@ -83,8 +77,8 @@ resource "aws_route_table_association" "pri_a" {
 
 # 5. Security Groups
 resource "aws_security_group" "lb_test_sg" {
-  name        = "lb_test_sg"
-  vpc_id      = aws_vpc.test_vpc.id
+  name   = "lb_test_sg"
+  vpc_id = aws_vpc.test_vpc.id
   ingress {
     from_port   = 80
     to_port     = 80
@@ -141,26 +135,26 @@ resource "aws_security_group" "test_sg_private" {
 
 # 6. EC2 Instances
 resource "aws_instance" "test_bastion" {
-  ami                         = "ami-098e39bafa7e7303d"
-  instance_type               = "t2.micro"
-  subnet_id                   = aws_subnet.test_public_subnet.id
-  vpc_security_group_ids      = [aws_security_group.test_sg_bastion.id]
-  key_name                    = "mykeypair21826"
+  ami           = "ami-098e39bafa7e7303d"
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.test_public_subnet.id
+  vpc_security_group_ids = [aws_security_group.test_sg_bastion.id]
+  key_name      = "mykeypair21826"
   associate_public_ip_address = true
-  tags                        = { Name = "test_bastion" }
+  tags          = { Name = "test_bastion" }
 }
 
 resource "aws_instance" "test_private_instance" {
-  count                  = 1
-  ami                    = "ami-098e39bafa7e7303d"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.test_private_subnet.id
+  count         = 1
+  ami           = "ami-098e39bafa7e7303d"
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.test_private_subnet.id
   vpc_security_group_ids = [aws_security_group.test_sg_private.id]
-  key_name               = "mykeypair21826"
-  tags                   = { Name = "test_private_instance" }
+  key_name      = "mykeypair21826"
+  tags          = { Name = "test_private_instance" }
 }
 
-# 7. Application Load Balancer & Target Group
+# 7. Load Balancer
 resource "aws_lb" "test_lb" {
   name               = "test-lb"
   internal           = false
@@ -196,7 +190,7 @@ resource "aws_lb_target_group_attachment" "test_tg_attachment" {
   port             = 5000
 }
 
-# 8. RDS MySQL Database
+# 8. RDS MySQL
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "main-db-subnet-group"
   subnet_ids = [aws_subnet.test_public_subnet.id, aws_subnet.test_public_subnet_b.id]
