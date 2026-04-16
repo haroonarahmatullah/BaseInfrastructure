@@ -1,0 +1,16 @@
+# Local terraform directory (contains large provider binaries)
+.terraform/
+
+# Lock file (optional to ignore, but common if working alone)
+.terraform.lock.hcl
+
+# State files (CRITICAL: These contain secrets like your RDS password in plain text!)
+*.tfstate
+*.tfstate.*
+
+# Variables files (if you eventually use them for secrets)
+*.tfvars
+*.tfvars.json
+
+# Crash logs
+crash.log
