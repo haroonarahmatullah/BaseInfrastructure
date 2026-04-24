@@ -1,16 +1,39 @@
-# Local terraform directory (contains large provider binaries)
-.terraform/
+# Local .terraform directories
+**/.terraform/*
 
-# Lock file (optional to ignore, but common if working alone)
-.terraform.lock.hcl
-
-# State files (CRITICAL: These contain secrets like your RDS password in plain text!)
+# .tfstate files
 *.tfstate
 *.tfstate.*
+*.tfstate.backup
 
-# Variables files (if you eventually use them for secrets)
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data
 *.tfvars
 *.tfvars.json
 
-# Crash logs
-crash.log
+# Ignore override files as they are usually used to override resources locally
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# Terraform lock file - optional, some teams commit this
+# .terraform.lock.hcl
+
+# Plan output files
+*.tfplan
+*.plan
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

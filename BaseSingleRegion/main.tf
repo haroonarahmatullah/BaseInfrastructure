@@ -1,0 +1,144 @@
+/* Contains  
+1 VPC with 2 Public Subnets and 1 Private Subnet
+1 IGW, NATGW, Private EC2, Public EC2
+*/
+
+
+# 1. Provider & VPC
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_vpc" "test_vpc" {
+  cidr_block           = "172.16.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+  tags                 = { Name = "test_vpc" }
+}
+
+# 2. Subnets
+resource "aws_subnet" "test_public_subnet" {
+  vpc_id                  = aws_vpc.test_vpc.id
+  cidr_block              = "172.16.1.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true # FIXED: Added back for Bastion accessibility
+  tags                    = { Name = "test_public_subnet" }
+}
+
+resource "aws_subnet" "test_public_subnet_b" {
+  vpc_id                  = aws_vpc.test_vpc.id
+  cidr_block              = "172.16.3.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true # FIXED: Consistent with other public subnets
+  tags                    = { Name = "test_public_subnet_b" }
+}
+
+resource "aws_subnet" "test_private_subnet" {
+  vpc_id            = aws_vpc.test_vpc.id
+  cidr_block        = "172.16.2.0/24"
+  availability_zone = "us-east-1a"
+  tags              = { Name = "test_private_subnet" }
+}
+
+# 3. Gateways
+resource "aws_internet_gateway" "test_igw" {
+  vpc_id = aws_vpc.test_vpc.id
+}
+
+# MODERN REGIONAL NAT GATEWAY (2026 Standard)
+# No EIP or Subnet ID required; AWS handles multi-AZ expansion automatically.
+resource "aws_nat_gateway" "regional_nat" {
+  connectivity_type = "public"
+  availability_mode = "regional"
+  vpc_id           = aws_vpc.test_vpc.id
+
+  tags = { Name = "regional-nat-gw" }
+
+  depends_on = [aws_internet_gateway.test_igw]
+}
+
+# 4. Route Tables
+resource "aws_route_table" "test_public_rt" {
+  vpc_id = aws_vpc.test_vpc.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.test_igw.id
+  }
+}
+
+resource "aws_route_table_association" "pub_a" {
+  subnet_id      = aws_subnet.test_public_subnet.id
+  route_table_id = aws_route_table.test_public_rt.id
+}
+
+resource "aws_route_table" "test_private_rt" {
+  vpc_id = aws_vpc.test_vpc.id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.regional_nat.id
+  }
+}
+
+resource "aws_route_table_association" "pri_a" {
+  subnet_id      = aws_subnet.test_private_subnet.id
+  route_table_id = aws_route_table.test_private_rt.id
+}
+
+# 5. Security Groups
+
+
+resource "aws_security_group" "test_sg_bastion" {
+  name   = "test_sg_bastion"
+  vpc_id = aws_vpc.test_vpc.id
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "test_sg_private" {
+  name   = "test_sg_private"
+  vpc_id = aws_vpc.test_vpc.id
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.test_sg_bastion.id]
+  }
+  
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# 6. EC2 Instances
+resource "aws_instance" "test_bastion" {
+  ami           = "ami-098e39bafa7e7303d"
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.test_public_subnet.id
+  vpc_security_group_ids = [aws_security_group.test_sg_bastion.id]
+  key_name      = "mykeypair21826"
+  tags          = { Name = "test_bastion" }
+}
+
+resource "aws_instance" "test_private_instance" {
+  count         = 1
+  ami           = "ami-098e39bafa7e7303d"
+  instance_type = "t2.micro"
+  subnet_id     = aws_subnet.test_private_subnet.id
+  vpc_security_group_ids = [aws_security_group.test_sg_private.id]
+  key_name      = "mykeypair21826"
+  tags          = { Name = "test_private_instance" }
+}
+

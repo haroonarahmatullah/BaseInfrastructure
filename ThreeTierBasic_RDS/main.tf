@@ -1,3 +1,8 @@
+/* Contains  
+1 VPC with 2 Public Subnets and 2 Private Subnets
+1 IGW, NATGW, LB, DB, Private EC2, Public EC2
+*/
+
 # 1. Provider & VPC
 provider "aws" {
   region = "us-east-1"
@@ -12,24 +17,34 @@ resource "aws_vpc" "test_vpc" {
 
 # 2. Subnets
 resource "aws_subnet" "test_public_subnet" {
-  vpc_id            = aws_vpc.test_vpc.id
-  cidr_block        = "172.16.1.0/24"
-  availability_zone = "us-east-1a"
-  tags              = { Name = "test_public_subnet" }
+  vpc_id                  = aws_vpc.test_vpc.id
+  cidr_block              = "172.16.1.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
+  tags                    = { Name = "test_public_subnet" }
 }
 
 resource "aws_subnet" "test_public_subnet_b" {
-  vpc_id            = aws_vpc.test_vpc.id
-  cidr_block        = "172.16.3.0/24"
-  availability_zone = "us-east-1b"
-  tags              = { Name = "test_public_subnet_b" }
+  vpc_id                  = aws_vpc.test_vpc.id
+  cidr_block              = "172.16.3.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
+  tags                    = { Name = "test_public_subnet_b" }
 }
 
 resource "aws_subnet" "test_private_subnet" {
   vpc_id            = aws_vpc.test_vpc.id
   cidr_block        = "172.16.2.0/24"
   availability_zone = "us-east-1a"
-  tags              = { Name = "test_private_subnet" }
+  tags              = { Name = "test_private_subnet_a" }
+}
+
+# ADDED: Second private subnet for DB Subnet Group high-availability requirements
+resource "aws_subnet" "test_private_subnet_b" {
+  vpc_id            = aws_vpc.test_vpc.id
+  cidr_block        = "172.16.4.0/24"
+  availability_zone = "us-east-1b"
+  tags              = { Name = "test_private_subnet_b" }
 }
 
 # 3. Gateways
@@ -37,15 +52,12 @@ resource "aws_internet_gateway" "test_igw" {
   vpc_id = aws_vpc.test_vpc.id
 }
 
-# THE NEW REGIONAL NAT (No EIP or Subnet required)
 resource "aws_nat_gateway" "regional_nat" {
   connectivity_type = "public"
   availability_mode = "regional"
-  vpc_id           = aws_vpc.test_vpc.id
-
-  tags = { Name = "regional-nat-gw" }
-
-  depends_on = [aws_internet_gateway.test_igw]
+  vpc_id            = aws_vpc.test_vpc.id
+  tags              = { Name = "regional-nat-gw" }
+  depends_on        = [aws_internet_gateway.test_igw]
 }
 
 # 4. Route Tables
@@ -62,6 +74,11 @@ resource "aws_route_table_association" "pub_a" {
   route_table_id = aws_route_table.test_public_rt.id
 }
 
+resource "aws_route_table_association" "pub_b" {
+  subnet_id      = aws_subnet.test_public_subnet_b.id
+  route_table_id = aws_route_table.test_public_rt.id
+}
+
 resource "aws_route_table" "test_private_rt" {
   vpc_id = aws_vpc.test_vpc.id
   route {
@@ -72,6 +89,11 @@ resource "aws_route_table" "test_private_rt" {
 
 resource "aws_route_table_association" "pri_a" {
   subnet_id      = aws_subnet.test_private_subnet.id
+  route_table_id = aws_route_table.test_private_rt.id
+}
+
+resource "aws_route_table_association" "pri_b" {
+  subnet_id      = aws_subnet.test_private_subnet_b.id
   route_table_id = aws_route_table.test_private_rt.id
 }
 
@@ -133,25 +155,41 @@ resource "aws_security_group" "test_sg_private" {
   }
 }
 
+# ADDED: Dedicated DB Security Group to isolate MySQL traffic
+resource "aws_security_group" "test_sg_db" {
+  name   = "test_sg_db"
+  vpc_id = aws_vpc.test_vpc.id
+  ingress {
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.test_sg_private.id]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 # 6. EC2 Instances
 resource "aws_instance" "test_bastion" {
-  ami           = "ami-098e39bafa7e7303d"
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.test_public_subnet.id
+  ami                    = "ami-098e39bafa7e7303d"
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.test_public_subnet.id
   vpc_security_group_ids = [aws_security_group.test_sg_bastion.id]
-  key_name      = "mykeypair21826"
-  associate_public_ip_address = true
-  tags          = { Name = "test_bastion" }
+  key_name               = "mykeypair21826"
+  tags                   = { Name = "test_bastion" }
 }
 
 resource "aws_instance" "test_private_instance" {
-  count         = 1
-  ami           = "ami-098e39bafa7e7303d"
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.test_private_subnet.id
+  ami                    = "ami-098e39bafa7e7303d"
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.test_private_subnet.id
   vpc_security_group_ids = [aws_security_group.test_sg_private.id]
-  key_name      = "mykeypair21826"
-  tags          = { Name = "test_private_instance" }
+  key_name               = "mykeypair21826"
+  tags                   = { Name = "test_private_instance" }
 }
 
 # 7. Load Balancer
@@ -186,26 +224,28 @@ resource "aws_lb_listener" "test_listener" {
 
 resource "aws_lb_target_group_attachment" "test_tg_attachment" {
   target_group_arn = aws_lb_target_group.test_tg.arn
-  target_id        = aws_instance.test_private_instance[0].id
+  target_id        = aws_instance.test_private_instance.id
   port             = 5000
 }
 
-# 8. RDS MySQL
+# 8. Private Database Subnet Group
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "main-db-subnet-group"
-  subnet_ids = [aws_subnet.test_public_subnet.id, aws_subnet.test_public_subnet_b.id]
+  # FIXED: Now using private subnets in 1a and 1b
+  subnet_ids = [aws_subnet.test_private_subnet.id, aws_subnet.test_private_subnet_b.id]
 }
 
 resource "aws_db_instance" "test_mysql" {
   allocated_storage      = 20
-  engine                 = "mysql"
-  engine_version         = "8.0"
-  instance_class         = "db.t3.micro"
-  db_name                = "testdb"
-  username               = "admin"
-  password               = "Maryam<3"
-  publicly_accessible    = true
-  db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
-  vpc_security_group_ids = [aws_security_group.test_sg_private.id]
+  engine                  = "mysql"
+  engine_version          = "8.0"
+  instance_class          = "db.t3.micro"
+  db_name                 = "testdb"
+  username                = "admin"
+  password                = "Maryam<3"
+  # FIXED: Removed public accessibility for security
+  publicly_accessible    = false
+  db_subnet_group_name    = aws_db_subnet_group.db_subnets.name
+  vpc_security_group_ids = [aws_security_group.test_sg_db.id]
   skip_final_snapshot    = true
 }
